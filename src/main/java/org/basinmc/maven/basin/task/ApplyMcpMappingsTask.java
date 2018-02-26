@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.Set;
 import org.basinmc.blackwater.task.Task;
 import org.basinmc.blackwater.task.error.TaskExecutionException;
+import org.basinmc.maven.basin.transformer.KeywordRemovalTransformer;
 import org.basinmc.plunger.Plunger;
 import org.basinmc.plunger.bytecode.NameMappingBytecodeTransformer;
 import org.basinmc.plunger.common.mapping.DelegatingNameMapping;
@@ -82,6 +83,7 @@ public class ApplyMcpMappingsTask implements Task {
         FileSystem outputFS = Plunger.createZipArchive(output)) {
       Plunger plunger = Plunger.bytecodeBuilder()
           .withTransformer(new NameMappingBytecodeTransformer(mapping))
+          .withTransformer(new KeywordRemovalTransformer())
           .withParallelism()
           .build(
               inputFS.getRootDirectories().iterator().next(),
