@@ -31,6 +31,7 @@ import java.util.Iterator;
 import org.basinmc.blackwater.task.Task;
 import org.basinmc.blackwater.task.error.TaskExecutionException;
 import org.basinmc.plunger.Plunger;
+import org.basinmc.plunger.sourcecode.SourcecodePlunger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,7 +77,7 @@ public class TransformSourceTask implements Task {
     Formatter formatter = new Formatter();
 
     try (FileSystem inputFS = Plunger.openZipArchive(input)) {
-      Plunger plunger = Plunger.sourceBuilder()
+      Plunger plunger = SourcecodePlunger.builder()
           .withCharset(this.charset)
           .withFormatter((source) -> {
             try {

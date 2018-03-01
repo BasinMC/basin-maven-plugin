@@ -28,13 +28,14 @@ import org.basinmc.blackwater.task.Task;
 import org.basinmc.blackwater.task.error.TaskExecutionException;
 import org.basinmc.maven.basin.transformer.KeywordRemovalTransformer;
 import org.basinmc.plunger.Plunger;
-import org.basinmc.plunger.bytecode.NameMappingBytecodeTransformer;
-import org.basinmc.plunger.common.mapping.DelegatingNameMapping;
-import org.basinmc.plunger.common.mapping.FieldNameMapping;
-import org.basinmc.plunger.common.mapping.MethodNameMapping;
-import org.basinmc.plunger.common.mapping.NameMapping;
-import org.basinmc.plunger.common.mapping.parser.CSVFieldNameMappingParser;
-import org.basinmc.plunger.common.mapping.parser.CSVMethodNameMappingParser;
+import org.basinmc.plunger.bytecode.BytecodePlunger;
+import org.basinmc.plunger.bytecode.transformer.NameMappingBytecodeTransformer;
+import org.basinmc.plunger.mapping.DelegatingNameMapping;
+import org.basinmc.plunger.mapping.FieldNameMapping;
+import org.basinmc.plunger.mapping.MethodNameMapping;
+import org.basinmc.plunger.mapping.NameMapping;
+import org.basinmc.plunger.mapping.csv.CSVFieldNameMappingParser;
+import org.basinmc.plunger.mapping.csv.CSVMethodNameMappingParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -81,7 +82,7 @@ public class ApplyMcpMappingsTask implements Task {
     logger.info("Applying mappings (this may take a long time) ...");
     try (FileSystem inputFS = Plunger.openZipArchive(input);
         FileSystem outputFS = Plunger.createZipArchive(output)) {
-      Plunger plunger = Plunger.bytecodeBuilder()
+      Plunger plunger = BytecodePlunger.builder()
           .withTransformer(new NameMappingBytecodeTransformer(mapping))
           .withTransformer(new KeywordRemovalTransformer())
           .withParallelism()

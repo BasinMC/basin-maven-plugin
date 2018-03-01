@@ -25,7 +25,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Optional;
 import org.apache.commons.codec.binary.Hex;
-import org.basinmc.plunger.bytecode.BytecodeTransformer;
+import org.basinmc.plunger.bytecode.transformer.BytecodeTransformer;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;

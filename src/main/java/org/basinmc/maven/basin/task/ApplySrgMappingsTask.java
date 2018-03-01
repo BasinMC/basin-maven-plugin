@@ -30,10 +30,18 @@ import java.util.Set;
 import org.basinmc.blackwater.task.Task;
 import org.basinmc.blackwater.task.error.TaskExecutionException;
 import org.basinmc.plunger.Plunger;
-import org.basinmc.plunger.bytecode.DebugAttributeBytecodeTransformer;
-import org.basinmc.plunger.bytecode.NameMappingBytecodeTransformer;
-import org.basinmc.plunger.common.mapping.NameMapping;
-import org.basinmc.plunger.common.mapping.parser.SRGNameMappingParser;
+import org.basinmc.plunger.bytecode.BytecodePlunger;
+import org.basinmc.plunger.bytecode.transformer.DebugAttributeBytecodeTransformer;
+import org.basinmc.plunger.bytecode.transformer.NameMappingBytecodeTransformer;
+import org.basinmc.plunger.mapping.DelegatingNameMapping;
+import org.basinmc.plunger.mapping.NameMapping;
+import org.basinmc.plunger.mapping.ParameterNameMapping;
+import org.basinmc.plunger.mapping.mcp.InnerClassConstructorBytecodeTransformer;
+import org.basinmc.plunger.mapping.mcp.InnerClassMapping;
+import org.basinmc.plunger.mapping.mcp.InnerClassMappingBytecodeTransformer;
+import org.basinmc.plunger.mapping.mcp.VariableTableConstructionBytecodeTransformer;
+import org.basinmc.plunger.mapping.mcp.parser.SRGNameMappingParser;
+import org.basinmc.plunger.mapping.mcp.parser.SRGParameterNameMappingParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,13 +65,22 @@ public class ApplySrgMappingsTask implements Task {
     Path srg = context.getRequiredParameterPath("srg");
 
     logger.info("Loading SRG mappings ...");
-    NameMapping mapping;
+    NameMapping mainMapping;
+    ParameterNameMapping parameterMapping;
+    InnerClassMapping innerClassMapping;
     try (FileSystem fs = FileSystems.newFileSystem(srg, this.getClass().getClassLoader())) {
-      mapping = new SRGNameMappingParser().parse(fs.getPath("joined.srg"));
+      mainMapping = new SRGNameMappingParser().parse(fs.getPath("joined.srg"));
+      parameterMapping = new SRGParameterNameMappingParser().parse(fs.getPath("joined.exc"));
+      innerClassMapping = InnerClassMapping.read(fs.getPath("exceptor.json"));
     } catch (IOException ex) {
-      throw new TaskExecutionException("Failed to parse SRG mappings: " + ex.getMessage());
+      throw new TaskExecutionException("Failed to parse SRG mappings: " + ex.getMessage(), ex);
     }
     logger.info("  Success");
+
+    NameMapping mapping = DelegatingNameMapping.builder()
+        .withMapping(mainMapping)
+        .withParameterNameMapping(parameterMapping)
+        .build();
 
     logger.info("Applying mappings (this may take a long time) ...");
     try (FileSystem inputFS = Plunger.openZipArchive(input);
@@ -82,13 +99,16 @@ public class ApplySrgMappingsTask implements Task {
           inputFS.getPath("yggdrasil_session_pubkey.der")
       ));
 
-      Plunger plunger = Plunger.bytecodeBuilder()
+      Plunger plunger = BytecodePlunger.builder()
           .withParallelism()
           .withClassInclusionVoter((p) -> excludedElements.stream().noneMatch(p::startsWith))
           .withResourceVoter(
               (p) -> includedResources.stream().anyMatch((r) -> p.equals(r) || p.startsWith(r)))
+          .withTransformer(new DebugAttributeBytecodeTransformer(true, true, false, false))
+          .withTransformer(new VariableTableConstructionBytecodeTransformer())
           .withTransformer(new NameMappingBytecodeTransformer(mapping))
-          .withTransformer(new DebugAttributeBytecodeTransformer(true, true, false, true))
+          .withTransformer(new InnerClassMappingBytecodeTransformer(innerClassMapping))
+          .withTransformer(new InnerClassConstructorBytecodeTransformer())
           .build(
               inputFS.getRootDirectories().iterator().next(),
               outputFS.getRootDirectories().iterator().next()

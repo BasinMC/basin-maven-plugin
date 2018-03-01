@@ -68,9 +68,9 @@ public class DecompileTask implements Task {
     options.put(IFernflowerPreferences.DECOMPILE_GENERIC_SIGNATURES, "1");
     options.put(IFernflowerPreferences.REMOVE_SYNTHETIC, "1");
     options.put(IFernflowerPreferences.REMOVE_BRIDGE, "1");
-    options.put(IFernflowerPreferences.LITERALS_AS_IS, "0");
-    options.put(IFernflowerPreferences.UNIT_TEST_MODE, "0");
-    options.put(IFernflowerPreferences.MAX_PROCESSING_METHOD, "0");
+    // options.put(IFernflowerPreferences.LITERALS_AS_IS, "0");
+    // options.put(IFernflowerPreferences.UNIT_TEST_MODE, "0");
+    // options.put(IFernflowerPreferences.MAX_PROCESSING_METHOD, "0");
 
     try (FileSystem outputFS = Plunger.createZipArchive(output)) {
       try (FileSystem inputFS = Plunger.openZipArchive(input)) {
