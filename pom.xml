@@ -120,7 +120,7 @@
     <dependency>
       <groupId>net.minecraftforge</groupId>
       <artifactId>fernflower</artifactId>
-      <version>344</version>
+      <version>345</version>
     </dependency>
 
     <!-- Maven -->
