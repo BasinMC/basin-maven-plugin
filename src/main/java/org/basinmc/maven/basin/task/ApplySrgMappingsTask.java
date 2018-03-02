@@ -104,7 +104,7 @@ public class ApplySrgMappingsTask implements Task {
           .withClassInclusionVoter((p) -> excludedElements.stream().noneMatch(p::startsWith))
           .withResourceVoter(
               (p) -> includedResources.stream().anyMatch((r) -> p.equals(r) || p.startsWith(r)))
-          .withTransformer(new DebugAttributeBytecodeTransformer(true, true, false, false))
+          .withTransformer(new DebugAttributeBytecodeTransformer(true, true, true, false))
           .withTransformer(new VariableTableConstructionBytecodeTransformer())
           .withTransformer(new NameMappingBytecodeTransformer(mapping))
           .withTransformer(new InnerClassMappingBytecodeTransformer(innerClassMapping))
