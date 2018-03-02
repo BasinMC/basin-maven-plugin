@@ -26,7 +26,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.Manifest;
+import org.basinmc.blackwater.artifact.Artifact;
+import org.basinmc.blackwater.artifact.ArtifactReference;
 import org.basinmc.blackwater.task.Task;
 import org.basinmc.blackwater.task.error.TaskExecutionException;
 import org.basinmc.plunger.Plunger;
@@ -48,9 +51,11 @@ public class DecompileTask implements Task {
   private static final Logger logger = LoggerFactory.getLogger(DecompileTask.class);
 
   private final Charset charset;
+  private final Set<ArtifactReference> dependencies;
 
-  public DecompileTask(@NonNull Charset charset) {
+  public DecompileTask(@NonNull Charset charset, @NonNull Set<ArtifactReference> dependencies) {
     this.charset = charset;
+    this.dependencies = dependencies;
   }
 
   /**
@@ -68,9 +73,9 @@ public class DecompileTask implements Task {
     options.put(IFernflowerPreferences.DECOMPILE_GENERIC_SIGNATURES, "1");
     options.put(IFernflowerPreferences.REMOVE_SYNTHETIC, "1");
     options.put(IFernflowerPreferences.REMOVE_BRIDGE, "1");
-    // options.put(IFernflowerPreferences.LITERALS_AS_IS, "0");
-    // options.put(IFernflowerPreferences.UNIT_TEST_MODE, "0");
-    // options.put(IFernflowerPreferences.MAX_PROCESSING_METHOD, "0");
+    options.put(IFernflowerPreferences.LITERALS_AS_IS, "0");
+    options.put(IFernflowerPreferences.UNIT_TEST_MODE, "0");
+    options.put(IFernflowerPreferences.MAX_PROCESSING_METHOD, "0");
 
     try (FileSystem outputFS = Plunger.createZipArchive(output)) {
       try (FileSystem inputFS = Plunger.openZipArchive(input)) {
@@ -82,6 +87,16 @@ public class DecompileTask implements Task {
         );
 
         decompiler.addSpace(input.toFile(), true);
+
+        for (ArtifactReference reference : this.dependencies) {
+          Artifact artifact = context.getRequiredArtifactManager()
+              .getArtifact(reference)
+              .orElseThrow(
+                  () -> new TaskExecutionException("Failed to resolve artifact " + reference));
+
+          decompiler.addSpace(artifact.getPath().toFile(), false);
+        }
+
         decompiler.decompileContext();
       }
     } catch (IOException ex) {

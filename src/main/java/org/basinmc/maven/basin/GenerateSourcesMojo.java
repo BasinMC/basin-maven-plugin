@@ -18,13 +18,22 @@ package org.basinmc.maven.basin;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
 import java.io.File;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.apache.maven.artifact.factory.ArtifactFactory;
 import org.apache.maven.artifact.installer.ArtifactInstaller;
+import org.apache.maven.artifact.repository.ArtifactRepository;
+import org.apache.maven.artifact.repository.ArtifactRepositoryPolicy;
+import org.apache.maven.artifact.repository.MavenArtifactRepository;
+import org.apache.maven.artifact.repository.layout.DefaultRepositoryLayout;
 import org.apache.maven.artifact.resolver.ArtifactResolver;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
@@ -34,8 +43,10 @@ import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.project.DefaultProjectBuildingRequest;
 import org.apache.maven.project.MavenProject;
-import org.apache.maven.shared.dependencies.resolve.DependencyResolver;
+import org.apache.maven.project.ProjectBuildingRequest;
+import org.apache.maven.shared.artifact.DefaultArtifactCoordinate;
 import org.basinmc.blackwater.Pipeline;
 import org.basinmc.blackwater.artifact.ArtifactManager;
 import org.basinmc.blackwater.artifact.ArtifactReference;
@@ -49,11 +60,14 @@ import org.basinmc.blackwater.tasks.git.GitApplyMailArchiveTask;
 import org.basinmc.blackwater.tasks.git.GitCommitTask;
 import org.basinmc.blackwater.tasks.git.GitCreateBranchTask;
 import org.basinmc.blackwater.tasks.git.GitInitTask;
+import org.basinmc.blackwater.tasks.maven.FetchArtifactTask;
+import org.basinmc.maven.basin.launcher.GameVersion;
+import org.basinmc.maven.basin.launcher.LauncherVersionManifest;
 import org.basinmc.maven.basin.task.ApplyMcpMappingsTask;
 import org.basinmc.maven.basin.task.ApplySrgMappingsTask;
 import org.basinmc.maven.basin.task.DecompileTask;
-import org.basinmc.maven.basin.task.FetchMinecraftTask;
 import org.basinmc.maven.basin.task.TransformSourceTask;
+import org.codehaus.plexus.util.StringUtils;
 import org.eclipse.jgit.lib.PersonIdent;
 
 /**
@@ -129,7 +143,8 @@ public class GenerateSourcesMojo extends AbstractMojo {
   @Component
   private ArtifactResolver artifactResolver;
   @Component
-  private DependencyResolver dependencyResolver;
+  // such pure, much wow
+  private org.apache.maven.shared.artifact.resolve.ArtifactResolver pureArtifactResolver;
   @Parameter(required = true)
   private String mcpMappingVersion;
   @Parameter(required = true)
@@ -146,6 +161,75 @@ public class GenerateSourcesMojo extends AbstractMojo {
   private String sourceEncoding;
   @Parameter(required = true)
   private String srgMappingVersion;
+
+  /**
+   * Configures a set of tasks which's sole purpose is to preload all version dependencies
+   * (including client dependencies) and store them in the local maven repository.
+   *
+   * @param builder a reference to the pipeline builder.
+   * @param version a reference to the game version manifest.
+   */
+  private void configureDependencyPreload(@NonNull Pipeline.Builder builder,
+      @NonNull GameVersion version) {
+    ArtifactRepositoryPolicy policy = new ArtifactRepositoryPolicy(true,
+        ArtifactRepositoryPolicy.UPDATE_POLICY_DAILY,
+        ArtifactRepositoryPolicy.CHECKSUM_POLICY_WARN);
+
+    List<ArtifactRepository> repositories = new ArrayList<>();
+    repositories.add(
+        new MavenArtifactRepository(
+            "maven-central",
+            "https://repo1.maven.org/maven2",
+            new DefaultRepositoryLayout(),
+            policy,
+            policy
+        )
+    );
+    repositories.add(
+        new MavenArtifactRepository(
+            "minecraft",
+            "https://libraries.minecraft.net/",
+            new DefaultRepositoryLayout(),
+            policy,
+            policy
+        )
+    );
+
+    ProjectBuildingRequest request = new DefaultProjectBuildingRequest(
+        this.session.getProjectBuildingRequest());
+    request.setRemoteRepositories(repositories);
+
+    version.getLibraries().stream()
+        .filter((l) -> l.getDownloads().getArtifact().isPresent())
+        .forEach((l) -> {
+          DefaultArtifactCoordinate coordinate = new DefaultArtifactCoordinate();
+
+          String[] tokens = StringUtils.split(l.getName(), ":");
+          if (tokens.length < 3 || tokens.length > 5) {
+            throw new IllegalArgumentException("Invalid artifact \"" + l.getName()
+                + "\" must be in format groupId:artifactId:version[:packaging[:classifier]]");
+          }
+
+          coordinate.setGroupId(tokens[0]);
+          coordinate.setArtifactId(tokens[1]);
+          coordinate.setVersion(tokens[2]);
+          if (tokens.length >= 4) {
+            coordinate.setExtension(tokens[3]);
+          }
+          if (tokens.length == 5) {
+            coordinate.setClassifier(tokens[4]);
+          }
+
+          try {
+            builder.withTask(new FetchArtifactTask(this.pureArtifactResolver, request, coordinate))
+                .register();
+          } catch (TaskParameterException ex) {
+            throw new IllegalStateException(
+                "Failed to register task for dependency " + coordinate + ": " + ex.getMessage(),
+                ex);
+          }
+        });
+  }
 
   /**
    * {@inheritDoc}
@@ -218,20 +302,37 @@ public class GenerateSourcesMojo extends AbstractMojo {
     // resource files
     PathMatcher sourceFileMatcher = FileSystems.getDefault().getPathMatcher("glob:**.java");
 
+    // fetch the launcher version manifest so we know where to retrieve the game file from and which
+    // dependencies to populate and pass on
+    GameVersion version;
+
+    try {
+      version = LauncherVersionManifest.get()
+          .getVersion(this.minecraftVersion)
+          .orElseThrow(() -> new MojoExecutionException(
+              "Illegal Minecraft version: " + this.minecraftVersion + " does not exist"))
+          .get();
+    } catch (IOException ex) {
+      throw new MojoExecutionException(
+          "Failed to retrieve one or more launcher manifests: " + ex.getMessage(), ex);
+    }
+
     try {
       // Build Pipeline overview:
       //
-      //   (1) Resolve SRG mappings using a maven or local repository
-      //   (2) Download the MCP mappings from mcpbot's website
-      //   (3) Download the Minecraft binary from Mojang's servers
-      //   (4) Apply SRG mappings to vanilla
-      //   (5) Apply the MCP mappings on top of SRG
-      //   (6) Decompile the mapped version
-      //   (7) Apply source code access transformations, reformat and extract
-      //   (8) Initialize git repository
-      //   (9) Add files to repository
-      //   (10) Create initial commit
-      //   (11) Apply git patches
+      //   (1)  Resolve SRG mappings using a maven or local repository
+      //   (2)  Download the MCP mappings from mcpbot's website
+      //   (3)  Download the Minecraft binary from Mojang's servers
+      //   (4)  Pre-Populate all game dependencies
+      //   (5)  Apply SRG mappings to vanilla
+      //   (6)  Apply the MCP mappings on top of SRG
+      //   (7)  Decompile the mapped version
+      //   (8)  Apply source code access transformations, reformat and extract
+      //   (9)  Initialize git repository
+      //   (10) Add files to repository
+      //   (11) Create initial commit
+      //   (12) Create a reference branch called "upstream"
+      //   (13) Apply git patches
       //
       // @formatter:off
       Pipeline pipeline = Pipeline.builder()
@@ -242,40 +343,41 @@ public class GenerateSourcesMojo extends AbstractMojo {
           .withTask(new DownloadFileTask(this.getMcpUrl())) // (2)
               .withOutputArtifact(mcpReference)
               .register()
-          .withTask(new FetchMinecraftTask(this.minecraftVersion)) // (3)
+          .withTask(new DownloadFileTask(version.getDownloads().getServer().getUrl())) // (3)
               .withOutputArtifact(vanillaReference)
               .register()
-          .withTask(new ApplySrgMappingsTask()) // (4)
+          .apply((b) -> this.configureDependencyPreload(b, version)) // (4)
+          .withTask(new ApplySrgMappingsTask()) // (5)
               .withInputArtifact(vanillaReference)
               .withOutputArtifact(srgMappedReference)
               .withParameter("srg", srgReference)
               .register()
-          .withTask(new ApplyMcpMappingsTask()) // (5)
+          .withTask(new ApplyMcpMappingsTask()) // (6)
               .withInputArtifact(srgMappedReference)
               .withOutputArtifact(mcpMappedReference)
               .withParameter("mcp", mcpReference)
               .register()
-          .withTask(new DecompileTask(charset)) // (6)
+          .withTask(new DecompileTask(charset, this.getDependencies(version))) // (7)
               .withInputArtifact(mcpMappedReference)
               .withOutputArtifact(decompiledReference)
               .register()
-          .withTask(new TransformSourceTask(charset, this.accessTransformationsFile)) // (7)
+          .withTask(new TransformSourceTask(charset, this.accessTransformationsFile)) // (8)
               .withInputArtifact(decompiledReference)
               .withOutputFile(this.sourceDirectory.toPath())
               .register()
-          .withTask(new GitInitTask()) // (8)
+          .withTask(new GitInitTask()) // (9)
               .withInputFile(this.sourceDirectory.toPath())
               .register()
-          .withTask(new GitAddTask(sourceFileMatcher::matches)) // (9)
+          .withTask(new GitAddTask(sourceFileMatcher::matches)) // (10)
               .withInputFile(this.sourceDirectory.toPath())
               .register()
-          .withTask(new GitCommitTask(new PersonIdent("Basin", "contact@basinmc.org"), "Decompiled Minecraft")) // (10)
+          .withTask(new GitCommitTask(new PersonIdent("Basin", "contact@basinmc.org"), "Decompiled Minecraft")) // (11)
               .withInputFile(this.sourceDirectory.toPath())
               .register()
-          .withTask(new GitCreateBranchTask("upstream"))
+          .withTask(new GitCreateBranchTask("upstream")) // (12)
               .withInputFile(this.sourceDirectory.toPath())
               .register()
-          .withTask(new GitApplyMailArchiveTask("upstream")) // (11)
+          .withTask(new GitApplyMailArchiveTask("upstream")) // (13)
               .withInputFile(this.patchDirectory.toPath())
               .withOutputFile(this.sourceDirectory.toPath())
               .register()
@@ -291,6 +393,37 @@ public class GenerateSourcesMojo extends AbstractMojo {
     } catch (TaskException ex) {
       throw new MojoExecutionException("Failed to execute pipeline: " + ex.getMessage(), ex);
     }
+  }
+
+  /**
+   * Retrieves a set of artifact references which refer to the dependencies which are declared for a
+   * specific game version (and have typically already been preloaded).
+   *
+   * @param version a game version.
+   * @return a set of references.
+   */
+  @NonNull
+  public Set<ArtifactReference> getDependencies(@NonNull GameVersion version) {
+    return version.getLibraries().stream()
+        .filter((l) -> l.getDownloads().getArtifact().isPresent())
+        .map((l) -> {
+
+          String[] tokens = StringUtils.split(l.getName(), ":");
+          if (tokens.length < 3 || tokens.length > 5) {
+            throw new IllegalArgumentException("Invalid artifact \"" + l.getName()
+                + "\" must be in format groupId:artifactId:version[:packaging[:classifier]]");
+          }
+
+          return new MavenArtifactReference(
+              tokens[0],
+              tokens[1],
+              tokens[2],
+              tokens.length == 5 ? tokens[4] : "jar",
+              tokens.length >= 4 ? tokens[3] : null,
+              false
+          );
+        })
+        .collect(Collectors.toSet());
   }
 
   /**
