@@ -83,9 +83,9 @@ public class ApplyMcpMappingsTask implements Task {
     try (FileSystem inputFS = Plunger.openZipArchive(input);
         FileSystem outputFS = Plunger.createZipArchive(output)) {
       Plunger plunger = BytecodePlunger.builder()
+          .withParallelism()
           .withTransformer(new NameMappingBytecodeTransformer(mapping))
           .withTransformer(new KeywordRemovalTransformer())
-          .withParallelism()
           .build(
               inputFS.getRootDirectories().iterator().next(),
               outputFS.getRootDirectories().iterator().next()
