@@ -33,6 +33,8 @@ import org.basinmc.blackwater.artifact.ArtifactReference;
 import org.basinmc.blackwater.task.Task;
 import org.basinmc.blackwater.task.error.TaskExecutionException;
 import org.basinmc.plunger.Plunger;
+import org.basinmc.plunger.bytecode.BytecodePlunger;
+import org.basinmc.plunger.mapping.mcp.AccessLevelCorrectionBytecodeTransformer;
 import org.jetbrains.java.decompiler.main.decompiler.BaseDecompiler;
 import org.jetbrains.java.decompiler.main.extern.IBytecodeProvider;
 import org.jetbrains.java.decompiler.main.extern.IFernflowerLogger;
@@ -79,25 +81,40 @@ public class DecompileTask implements Task {
 
     try (FileSystem outputFS = Plunger.createZipArchive(output)) {
       try (FileSystem inputFS = Plunger.openZipArchive(input)) {
-        BaseDecompiler decompiler = new BaseDecompiler(
-            new NioBytecodeProvider(inputFS),
-            new NioResultSaver(inputFS, outputFS),
-            options,
-            new Slf4jLogger()
-        );
+        Path intermediateFile = context.allocateTemporaryDirectory().resolve("intermediate.jar");
 
-        decompiler.addSpace(input.toFile(), true);
-
-        for (ArtifactReference reference : this.dependencies) {
-          Artifact artifact = context.getRequiredArtifactManager()
-              .getArtifact(reference)
-              .orElseThrow(
-                  () -> new TaskExecutionException("Failed to resolve artifact " + reference));
-
-          decompiler.addSpace(artifact.getPath().toFile(), false);
+        try (FileSystem intermediateFS = Plunger.createZipArchive(intermediateFile)) {
+          Plunger plunger = BytecodePlunger.builder()
+              .withParallelism()
+              .withTransformer(new AccessLevelCorrectionBytecodeTransformer())
+              .build(
+                  inputFS.getRootDirectories().iterator().next(),
+                  intermediateFS.getRootDirectories().iterator().next()
+              );
+          plunger.apply();
         }
 
-        decompiler.decompileContext();
+        try (FileSystem intermediateFS = Plunger.openZipArchive(intermediateFile)) {
+          BaseDecompiler decompiler = new BaseDecompiler(
+              new NioBytecodeProvider(inputFS),
+              new NioResultSaver(intermediateFS, outputFS),
+              options,
+              new Slf4jLogger()
+          );
+
+          decompiler.addSpace(intermediateFile.toFile(), true);
+
+          for (ArtifactReference reference : this.dependencies) {
+            Artifact artifact = context.getRequiredArtifactManager()
+                .getArtifact(reference)
+                .orElseThrow(
+                    () -> new TaskExecutionException("Failed to resolve artifact " + reference));
+
+            decompiler.addSpace(artifact.getPath().toFile(), false);
+          }
+
+          decompiler.decompileContext();
+        }
       }
     } catch (IOException ex) {
       throw new TaskExecutionException("Failed to create source archive: " + ex.getMessage(), ex);
