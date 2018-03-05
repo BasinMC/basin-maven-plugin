@@ -123,6 +123,13 @@
       <version>345</version>
     </dependency>
 
+    <!-- Lavatory -->
+    <dependency>
+      <groupId>org.basinmc</groupId>
+      <artifactId>lavatory</artifactId>
+      <version>1.0-SNAPSHOT</version>
+    </dependency>
+
     <!-- Maven -->
     <dependency>
       <groupId>org.apache.maven</groupId>

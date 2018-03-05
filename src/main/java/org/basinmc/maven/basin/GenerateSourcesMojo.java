@@ -61,8 +61,9 @@ import org.basinmc.blackwater.tasks.git.GitCommitTask;
 import org.basinmc.blackwater.tasks.git.GitCreateBranchTask;
 import org.basinmc.blackwater.tasks.git.GitInitTask;
 import org.basinmc.blackwater.tasks.maven.FetchArtifactTask;
-import org.basinmc.maven.basin.launcher.GameVersion;
-import org.basinmc.maven.basin.launcher.LauncherVersionManifest;
+import org.basinmc.lavatory.Manifest;
+import org.basinmc.lavatory.file.Download;
+import org.basinmc.lavatory.version.Version;
 import org.basinmc.maven.basin.task.ApplyMcpMappingsTask;
 import org.basinmc.maven.basin.task.ApplySrgMappingsTask;
 import org.basinmc.maven.basin.task.DecompileTask;
@@ -170,7 +171,7 @@ public class GenerateSourcesMojo extends AbstractMojo {
    * @param version a reference to the game version manifest.
    */
   private void configureDependencyPreload(@NonNull Pipeline.Builder builder,
-      @NonNull GameVersion version) {
+      @NonNull Version version) {
     ArtifactRepositoryPolicy policy = new ArtifactRepositoryPolicy(true,
         ArtifactRepositoryPolicy.UPDATE_POLICY_DAILY,
         ArtifactRepositoryPolicy.CHECKSUM_POLICY_WARN);
@@ -304,18 +305,24 @@ public class GenerateSourcesMojo extends AbstractMojo {
 
     // fetch the launcher version manifest so we know where to retrieve the game file from and which
     // dependencies to populate and pass on
-    GameVersion version;
+    Version version;
+    Download serverDownload;
 
     try {
-      version = LauncherVersionManifest.get()
+      version = Manifest.fetch()
           .getVersion(this.minecraftVersion)
           .orElseThrow(() -> new MojoExecutionException(
               "Illegal Minecraft version: " + this.minecraftVersion + " does not exist"))
-          .get();
+          .fetch();
     } catch (IOException ex) {
       throw new MojoExecutionException(
           "Failed to retrieve one or more launcher manifests: " + ex.getMessage(), ex);
     }
+
+    serverDownload = version.getServerDownload()
+        .orElseThrow(() -> new MojoExecutionException(
+            "Illegal minecraft version \"" + this.minecraftVersion
+                + "\": Version does not provide a dedicated server"));
 
     try {
       // Build Pipeline overview:
@@ -343,7 +350,7 @@ public class GenerateSourcesMojo extends AbstractMojo {
           .withTask(new DownloadFileTask(this.getMcpUrl())) // (2)
               .withOutputArtifact(mcpReference)
               .register()
-          .withTask(new DownloadFileTask(version.getDownloads().getServer().getUrl())) // (3)
+          .withTask(new DownloadFileTask(serverDownload.getUrl())) // (3)
               .withOutputArtifact(vanillaReference)
               .register()
           .apply((b) -> this.configureDependencyPreload(b, version)) // (4)
@@ -403,7 +410,7 @@ public class GenerateSourcesMojo extends AbstractMojo {
    * @return a set of references.
    */
   @NonNull
-  public Set<ArtifactReference> getDependencies(@NonNull GameVersion version) {
+  public Set<ArtifactReference> getDependencies(@NonNull Version version) {
     return version.getLibraries().stream()
         .filter((l) -> l.getDownloads().getArtifact().isPresent())
         .map((l) -> {
